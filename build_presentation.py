@@ -80,14 +80,16 @@ def split_text_to_sentences(text, max_len=20, min_len=10):
                 cleaned[-1] += s
     return cleaned
 
-def draw_subtitle_on_image(image_path, text, output_path, font_path, font_size=240, rect_height=360, bottom_margin=120, rect_alpha=180):
+def draw_subtitle_on_image(image_path, text, output_path, font_path, font_size=55, rect_height=90, bottom_margin=50, rect_alpha=140, style="stroke", stroke_width=3):
     """
-    在图片底部绘制大字号自适应滚动字幕。
+    在图片底部绘制字幕。
     - font_path: 字体路径，macOS 默认华文黑体 STHeiti Medium
     - font_size: 字幕基础大小
-    - rect_height: 黑色半透明底条的高度
-    - bottom_margin: 底条距离图片最下方的距离
-    - rect_alpha: 底条的半透明度 (0-255)
+    - rect_height: 黑色半透明底条的高度 (只在 style="banner" 时有效)
+    - bottom_margin: 字幕距离最底部的边距
+    - rect_alpha: 底条的半透明度 (0-255) (只在 style="banner" 时有效)
+    - style: 字幕类型，"stroke" (白色文字+黑色描边) 或 "banner" (半透明底条)
+    - stroke_width: 描边像素宽度 (只在 style="stroke" 时有效)
     """
     img = Image.open(image_path)
     width, height = img.size
@@ -101,7 +103,7 @@ def draw_subtitle_on_image(image_path, text, output_path, font_path, font_size=2
     font = None
     current_size = font_size
     
-    while current_size >= 40:
+    while current_size >= 24:
         try:
             font = ImageFont.truetype(font_path, current_size)
         except IOError:
@@ -111,26 +113,41 @@ def draw_subtitle_on_image(image_path, text, output_path, font_path, font_size=2
             
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
-        # 预留安全边距，宽度不能越界
-        if text_width <= width - 400:
+        # 预留安全边距，左右各预留 100 像素，总宽度不能越界
+        if text_width <= width - 200:
             break
-        current_size -= 20
+        current_size -= 2
         
     bbox = draw.textbbox((0, 0), text, font=font)
     text_width = bbox[2] - bbox[0]
     text_height = bbox[3] - bbox[1]
     
-    rect_y1 = height - bottom_margin - rect_height
-    rect_y2 = height - bottom_margin
-    
-    # 绘制半透明黑底字幕遮罩
-    draw.rectangle([0, rect_y1, width, rect_y2], fill=(0, 0, 0, rect_alpha))
-    
-    # 计算文字的绝对居中坐标
-    text_x = (width - text_width) // 2
-    text_y = rect_y1 + (rect_height - text_height) // 2 - 15
-    
-    draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
+    if style == "banner":
+        rect_y1 = height - bottom_margin - rect_height
+        rect_y2 = height - bottom_margin
+        
+        # 绘制半透明黑底字幕遮罩
+        draw.rectangle([0, rect_y1, width, rect_y2], fill=(0, 0, 0, rect_alpha))
+        
+        # 计算文字的绝对居中坐标
+        text_x = (width - text_width) // 2
+        text_y = rect_y1 + (rect_height - text_height) // 2 - bbox[1]
+        
+        draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 255))
+    else: # stroke 描边样式
+        # 居中水平坐标，垂直坐标根据 bottom_margin 贴底
+        text_x = (width - text_width) // 2
+        text_y = height - bottom_margin - text_height - bbox[1]
+        
+        # 绘制白字加黑描边
+        draw.text(
+            (text_x, text_y), 
+            text, 
+            font=font, 
+            fill=(255, 255, 255, 255), 
+            stroke_width=stroke_width, 
+            stroke_fill=(0, 0, 0, 255)
+        )
     
     final_img = Image.alpha_composite(img, overlay)
     final_img.convert('RGB').save(output_path, 'PNG')
@@ -209,11 +226,14 @@ def main():
     parser.add_argument("--prompt-file", help="参考配音对应的逐字稿文件路径（可选，若未指定则从 --prompt-text 读取）")
     
     # 视频/字幕自定义配置
-    parser.add_argument("--font-path", default="/System/Library/Fonts/STHeiti Medium.ttc", help="绘制字幕的中文字体路径（默认系统 STHeiti）")
-    parser.add_argument("--font-size", type=int, default=240, help="字幕基础字号 (默认 240)")
-    parser.add_argument("--bottom-margin", type=int, default=120, help="字幕框距离底部的距离 (默认 120)")
-    parser.add_argument("--rect-height", type=int, default=360, help="字幕遮罩高度 (默认 360)")
-    parser.add_argument("--rect-alpha", type=int, default=180, help="字幕框半透明度 0-255 (默认 180)")
+    default_font = "C:\\Windows\\Fonts\\msyh.ttc" if os.name == 'nt' else "/System/Library/Fonts/STHeiti Medium.ttc"
+    parser.add_argument("--font-path", default=default_font, help="绘制字幕的中文字体路径")
+    parser.add_argument("--font-size", type=int, default=55, help="字幕基础字号 (默认 55)")
+    parser.add_argument("--bottom-margin", type=int, default=50, help="字幕距离底部的距离 (默认 50)")
+    parser.add_argument("--rect-height", type=int, default=90, help="字幕遮罩高度 (默认 90，仅在 style 为 banner 时有效)")
+    parser.add_argument("--rect-alpha", type=int, default=140, help="字幕框半透明度 0-255 (默认 140，仅在 style 为 banner 时有效)")
+    parser.add_argument("--subtitle-style", choices=["stroke", "banner"], default="stroke", help="字幕渲染样式：stroke(描边白字，默认)，banner(黑色半透明底条)")
+    parser.add_argument("--stroke-width", type=int, default=3, help="字幕描边宽度 (默认 3)")
     
     # 运行控制参数
     parser.add_argument("--workdir", default="./workdir_video", help="工作缓存目录（默认 ./workdir_video）")
@@ -231,12 +251,17 @@ def main():
         # 兼容虚拟环境
         venv_site = os.path.join(cloner_abs, ".venv", "lib", "python3.10", "site-packages")
         if not os.path.exists(venv_site):
-            # 尝试 3.9 或 3.8 或 3.11 等常见目录
-            for py_ver in ["python3.9", "python3.11", "python3.8", "python3.12"]:
-                candidate = os.path.join(cloner_abs, ".venv", "lib", py_ver, "site-packages")
-                if os.path.exists(candidate):
-                    venv_site = candidate
-                    break
+            # 尝试 Windows 的 Lib/site-packages
+            windows_site = os.path.join(cloner_abs, ".venv", "Lib", "site-packages")
+            if os.path.exists(windows_site):
+                venv_site = windows_site
+            else:
+                # 尝试 3.9 或 3.8 或 3.11 等常见目录
+                for py_ver in ["python3.9", "python3.11", "python3.8", "python3.12"]:
+                    candidate = os.path.join(cloner_abs, ".venv", "lib", py_ver, "site-packages")
+                    if os.path.exists(candidate):
+                        venv_site = candidate
+                        break
         if os.path.exists(venv_site):
             sys.path.append(venv_site)
             
@@ -363,7 +388,9 @@ def main():
                 font_size=args.font_size,
                 rect_height=args.rect_height,
                 bottom_margin=args.bottom_margin,
-                rect_alpha=args.rect_alpha
+                rect_alpha=args.rect_alpha,
+                style=args.subtitle_style,
+                stroke_width=args.stroke_width
             )
             
             global_image_list.append((image_sub_path, duration))
@@ -388,6 +415,7 @@ def main():
         "-f", "concat",
         "-safe", "0",
         "-i", concat_v_file,
+        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-pix_fmt", "yuv420p",
         "-r", "25",
         "-c:v", "libx264",
