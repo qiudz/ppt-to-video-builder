@@ -209,8 +209,8 @@ def normalize_text_for_tts(text):
 
     # 3. 常见技术词、产品名、缩写、文件名特殊处理
     replacements = {
-        r"\bCLAUDE\.md\b": "Claude MD",
-        r"\bClaude\.md\b": "Claude MD",
+        r"\bCLAUDE\.md\b": "CLAUDE 点 md",
+        r"\bClaude\.md\b": "CLAUDE 点 md",
         r"\bNext\.js\b": "Next js",
         r"\bNode\.js\b": "Node js",
         r"\bVue\.js\b": "Vue js",
@@ -658,6 +658,15 @@ def draw_subtitle_on_image(
     img = Image.open(image_path)
     width, height = img.size
 
+    # 根据图片的实际宽度与基准宽度 (1920) 自动等比缩放字幕尺寸参数，使字幕外观在不同分辨率下保持一致
+    scale_factor = width / 1920.0
+    font_size = max(12, int(font_size * scale_factor))
+    rect_height = max(24, int(rect_height * scale_factor))
+    bottom_margin = max(10, int(bottom_margin * scale_factor))
+    stroke_width = max(1, int(stroke_width * scale_factor))
+    min_font_size = max(6, int(28 * scale_factor))
+    horizontal_margin = max(20, int(100 * scale_factor))
+
     if img.mode != "RGBA":
         img = img.convert("RGBA")
 
@@ -670,8 +679,8 @@ def draw_subtitle_on_image(
         font_path=font_path,
         image_width=width,
         font_size=font_size,
-        min_font_size=28,
-        horizontal_margin=100,
+        min_font_size=min_font_size,
+        horizontal_margin=horizontal_margin,
         max_lines=max_lines,
         stroke_width=stroke_width if style == "stroke" else 0,
     )
@@ -923,6 +932,12 @@ def main():
     # 核心路径输入输出
     parser.add_argument("--pdf", help="输入的 PDF 幻灯片文件路径")
     parser.add_argument(
+        "--pdf-dpi",
+        type=int,
+        default=360,
+        help="PDF 转图片时的分辨率 (DPI)，默认 360 (适合 4K 输出)",
+    )
+    parser.add_argument(
         "--images-dir",
         help="输入的幻灯片图片目录。若已提取图片，可直接指定，与 --pdf 二选一",
     )
@@ -967,20 +982,20 @@ def main():
     parser.add_argument(
         "--font-size",
         type=int,
-        default=55,
-        help="字幕基础字号，默认 55",
+        default=42,
+        help="字幕基础字号，默认 42",
     )
     parser.add_argument(
         "--bottom-margin",
         type=int,
-        default=50,
-        help="字幕距离底部的距离，默认 50",
+        default=15,
+        help="字幕距离底部的距离，默认 15",
     )
     parser.add_argument(
         "--rect-height",
         type=int,
-        default=110,
-        help="字幕遮罩高度，默认 110，仅 style=banner 有效",
+        default=85,
+        help="字幕遮罩高度，默认 85，仅 style=banner 有效",
     )
     parser.add_argument(
         "--rect-alpha",
@@ -991,7 +1006,7 @@ def main():
     parser.add_argument(
         "--subtitle-style",
         choices=["stroke", "banner"],
-        default="stroke",
+        default="banner",
         help="字幕样式：stroke 为描边白字；banner 为黑色半透明底条",
     )
     parser.add_argument(
@@ -1015,14 +1030,14 @@ def main():
     parser.add_argument(
         "--max-video-width",
         type=int,
-        default=1920,
-        help="输出视频最大宽度，默认 1920",
+        default=3840,
+        help="输出视频最大宽度，默认 3840",
     )
     parser.add_argument(
         "--max-video-height",
         type=int,
-        default=1080,
-        help="输出视频最大高度，默认 1080",
+        default=2160,
+        help="输出视频最大高度，默认 2160",
     )
 
     # 运行控制参数
@@ -1141,7 +1156,7 @@ def main():
 
     # 1. 获取幻灯片图片
     if args.pdf:
-        convert_pdf_to_images(args.pdf, args.workdir)
+        convert_pdf_to_images(args.pdf, args.workdir, resolution=args.pdf_dpi)
         images_dir = args.workdir
     else:
         images_dir = args.images_dir
@@ -1289,6 +1304,11 @@ def main():
                             cfg_value=2.0,
                             inference_timesteps=args.timesteps,
                         )
+                        # 优化：在音频尾部拼接一小段静音 (0.25 秒)，提供自然的换气与停顿，避免句子拼接太紧密
+                        sample_rate = getattr(model.tts_model, "sample_rate", 24000)
+                        silence_len = int(sample_rate * 0.25)
+                        silence = np.zeros(silence_len, dtype=np.float32)
+                        wav = np.concatenate([wav, silence])
                     except Exception as e:
                         print(f"生成配音失败：{e}")
                         sys.exit(1)
@@ -1395,7 +1415,9 @@ def main():
         "-c:v",
         "libx264",
         "-preset",
-        "medium",
+        "superfast",
+        "-tune",
+        "stillimage",
         "-crf",
         "18",
         "-movflags",
